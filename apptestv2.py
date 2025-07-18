@@ -151,9 +151,133 @@ def test():
         'test': 'working',
     })
 
+# @app.route('/api/generate_token', methods=['GET'])
+# def generate_token():
+#     global token_counter, last_reset_date, last_assigned_counter_idx
+
+#     uhid = request.args.get('uhid')
+#     docid = request.args.get('docid')
+#     if not uhid or not docid:
+#         return jsonify({'error': 'Missing UHID or docid'}), 400
+
+#     patient = Patient.query.filter_by(uhid=uhid).first()
+#     if not patient:
+#         return jsonify({'error': 'Patient not found'}), 404
+
+#     PATIENT_PRIORITY = {'Emergency': 1, 'Vip': 2, 'Regular': 3}
+#     patient_priority = PATIENT_PRIORITY.get(patient.patienttype, 3)
+
+#     today = datetime.now().date()
+#     with token_lock:
+#         if today != last_reset_date:
+#             token_counter = 1
+#             last_reset_date = today
+#         token_number = token_counter
+#         token_counter += 1
+#         current_time = datetime.now()
+
+#     doctor = Doctor.query.filter_by(docid=str(docid)).first()
+#     if not doctor:
+#         return jsonify({'error': 'Doctor not found'}), 404
+
+#     # Fetch all open counters (status == True for boolean)
+#     counters = CounterInfo.query.filter(CounterInfo.status == True).order_by(CounterInfo.counterno).all()
+#     if not counters:
+#         return jsonify({'error': 'No open counters available'}), 400
+
+#     # Calculate queue lengths for all counters
+#     queue_lengths = []
+#     for c in counters:
+#         if c.queueinfo:
+#             if isinstance(c.queueinfo, str):
+#                 try:
+#                     queue = json.loads(c.queueinfo)
+#                 except Exception:
+#                     queue = []
+#             elif isinstance(c.queueinfo, list):
+#                 queue = c.queueinfo
+#             else:
+#                 queue = []
+#         else:
+#             queue = []
+#         queue_lengths.append(len(queue))
+
+#     # Find all counters with the shortest queue length
+#     min_queue_len = min(queue_lengths)
+#     eligible_counters = [c for c, l in zip(counters, queue_lengths) if l == min_queue_len]
+#     eligible_counters.sort(key=lambda c: c.counterno)
+
+#     # Use round-robin among eligible counters
+#     selected_counter = eligible_counters[last_assigned_counter_idx % len(eligible_counters)]
+#     last_assigned_counter_idx += 1
+
+#     counterno = selected_counter.counterno
+
+#     # Store in tokenmap
+#     new_tokenmap = TokenMap(
+#         tokenno=token_number,
+#         uhid=uhid,
+#         time=current_time,
+#         docid=str(docid)
+#     )
+#     db.session.add(new_tokenmap)
+#     db.session.commit()
+
+#     # Add entry to vitallogs
+#     vitallog_entry = VitalsLog(
+#         counterno=counterno,
+#         uhid=uhid,
+#         tokenno=token_number,
+#         date=today,
+#         starttime=None,
+#         endtime=None
+#     )
+#     db.session.add(vitallog_entry)
+#     db.session.commit()
+
+#     # Insert token into queue by priority
+#     if selected_counter.queueinfo:
+#         if isinstance(selected_counter.queueinfo, str):
+#             try:
+#                 queue = json.loads(selected_counter.queueinfo)
+#             except Exception:
+#                 queue = []
+#         elif isinstance(selected_counter.queueinfo, list):
+#             queue = selected_counter.queueinfo
+#         else:
+#             queue = []
+#     else:
+#         queue = []
+
+#     def get_patient_priority_for_token(tokenno):
+#         v_log = VitalsLog.query.filter_by(tokenno=tokenno, counterno=counterno).first()
+#         if v_log:
+#             p = Patient.query.filter_by(uhid=v_log.uhid).first()
+#             return PATIENT_PRIORITY.get(p.patienttype, 3) if p else 3
+#         return 3
+
+#     insert_idx = len(queue)
+#     for idx, token in enumerate(queue):
+#         p_priority = get_patient_priority_for_token(token)
+#         if patient_priority < p_priority:
+#             insert_idx = idx
+#             break
+#     queue.insert(insert_idx, token_number)
+#     selected_counter.queueinfo = json.dumps(queue)
+#     db.session.commit()
+
+#     return jsonify({
+#         'uhid': uhid,
+#         'token_number': token_number,
+#         'datetime': current_time.isoformat(),
+#         'docid': docid,
+#         'counterno': counterno
+#     })
+
+
 @app.route('/api/generate_token', methods=['GET'])
 def generate_token():
-    global token_counter, last_reset_date, last_assigned_counter_idx
+    global last_assigned_counter_idx
 
     uhid = request.args.get('uhid')
     docid = request.args.get('docid')
@@ -168,13 +292,16 @@ def generate_token():
     patient_priority = PATIENT_PRIORITY.get(patient.patienttype, 3)
 
     today = datetime.now().date()
-    with token_lock:
-        if today != last_reset_date:
-            token_counter = 1
-            last_reset_date = today
-        token_number = token_counter
-        token_counter += 1
-        current_time = datetime.now()
+    current_time = datetime.now()
+
+    # --- The NEW robust token number logic! ---
+    latest_token = db.session.query(db.func.max(TokenMap.tokenno)).filter(
+        db.func.date(TokenMap.time) == today
+    ).scalar()
+    if latest_token is None:
+        token_number = 1
+    else:
+        token_number = latest_token + 1
 
     doctor = Doctor.query.filter_by(docid=str(docid)).first()
     if not doctor:
@@ -273,8 +400,6 @@ def generate_token():
         'docid': docid,
         'counterno': counterno
     })
-
-
 
 
 # --- API Endpoints  -   Vitals  ---
@@ -443,45 +568,6 @@ def finished_vitals():
     })
 
 
-
-
-@app.route('/api/doctors')
-def get_doctors():
-    doctors = Doctor.query.all()
-    return jsonify([{
-        'DocID': d.docid,
-        'DocName': d.docname,
-        'RoomNo': d.roomno,
-        'DocSpec': d.docspec
-    } for d in doctors])
-
-@app.route('/api/patients')
-def get_patients():
-    uhid = request.args.get('uhid')
-    if uhid:
-        patient = Patient.query.filter_by(uhid=uhid).first()
-        if patient:
-            return jsonify({
-                'UHID': patient.uhid,
-                'PatientName': patient.patientname,
-                'Age': patient.age,
-                'BloodGroup': patient.bloodgroup,
-                'PatientType': patient.patienttype,
-                'PhoneNumber': patient.phone_number
-            })
-        else:
-            return jsonify({'error': 'Patient not found'}), 404
-    else:
-        patients = Patient.query.all()
-        return jsonify([{
-            'UHID': p.uhid,
-            'PatientName': p.patientname,
-            'Age': p.age,
-            'BloodGroup': p.bloodgroup,
-            'PatientType': p.patienttype,
-            'PhoneNumber': p.phone_number
-        } for p in patients])
-    
 @app.route('/api/counters/add', methods=['POST'])
 def add_counter():
     data = request.get_json()
@@ -770,7 +856,9 @@ def docrooms_priority_queue():
                 'uhid': entry.uhid,
                 'docid': entry.docid,
                 'priority': priority,
-                'logid': entry.id  # use id for FIFO tie
+                'logid': entry.id,  # use id for FIFO tie
+                'starttime': str(entry.starttime) if entry.starttime else None,
+                'endtime': str(entry.endtime) if entry.endtime else None,
             })
         # Sort: priority first, then FIFO for matching priority
         enriched.sort(key=lambda x: (x['priority'], x['logid']))
@@ -837,8 +925,6 @@ def docroom_enable():
 
 
 # --- API Endpoints  -   Pharmacy  ---
-
-
 
 
 @app.route('/api/pharmacy/priority_queue', methods=['GET'])
@@ -999,6 +1085,49 @@ def pharmacy_disable():
         return jsonify({'status': 'disabled', 'pharmid': pharmid})
 
 
+
+
+# --- API Endpoints  -   Patient and Doctor Details  ---
+
+
+
+@app.route('/api/doctors')
+def get_doctors():
+    doctors = Doctor.query.all()
+    return jsonify([{
+        'DocID': d.docid,
+        'DocName': d.docname,
+        'RoomNo': d.roomno,
+        'DocSpec': d.docspec
+    } for d in doctors])
+
+@app.route('/api/patients')
+def get_patients():
+    uhid = request.args.get('uhid')
+    if uhid:
+        patient = Patient.query.filter_by(uhid=uhid).first()
+        if patient:
+            return jsonify({
+                'UHID': patient.uhid,
+                'PatientName': patient.patientname,
+                'Age': patient.age,
+                'BloodGroup': patient.bloodgroup,
+                'PatientType': patient.patienttype,
+                'PhoneNumber': patient.phone_number
+            })
+        else:
+            return jsonify({'error': 'Patient not found'}), 404
+    else:
+        patients = Patient.query.all()
+        return jsonify([{
+            'UHID': p.uhid,
+            'PatientName': p.patientname,
+            'Age': p.age,
+            'BloodGroup': p.bloodgroup,
+            'PatientType': p.patienttype,
+            'PhoneNumber': p.phone_number
+        } for p in patients])
+    
 
 
 
