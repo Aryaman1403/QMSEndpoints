@@ -63,10 +63,9 @@ class VitalsLog(db.Model):
 class CounterInfo(db.Model):
     __tablename__ = 'counterinfo'
     counterno = db.Column(db.Integer, primary_key=True)
-    status = db.Column(db.String)
+    status = db.Column(db.Boolean, default=True, nullable=False)
     counterloc = db.Column(db.String)
-    queueinfo = db.Column(db.Text)  # stores JSON list
-
+    queueinfo = db.Column(db.JSON)  # stores JSON list ################################
 
 class ConsultLog(db.Model):
     __tablename__ = 'consultlogs'
@@ -151,129 +150,6 @@ def test():
         'test': 'working',
     })
 
-# @app.route('/api/generate_token', methods=['GET'])
-# def generate_token():
-#     global token_counter, last_reset_date, last_assigned_counter_idx
-
-#     uhid = request.args.get('uhid')
-#     docid = request.args.get('docid')
-#     if not uhid or not docid:
-#         return jsonify({'error': 'Missing UHID or docid'}), 400
-
-#     patient = Patient.query.filter_by(uhid=uhid).first()
-#     if not patient:
-#         return jsonify({'error': 'Patient not found'}), 404
-
-#     PATIENT_PRIORITY = {'Emergency': 1, 'Vip': 2, 'Regular': 3}
-#     patient_priority = PATIENT_PRIORITY.get(patient.patienttype, 3)
-
-#     today = datetime.now().date()
-#     with token_lock:
-#         if today != last_reset_date:
-#             token_counter = 1
-#             last_reset_date = today
-#         token_number = token_counter
-#         token_counter += 1
-#         current_time = datetime.now()
-
-#     doctor = Doctor.query.filter_by(docid=str(docid)).first()
-#     if not doctor:
-#         return jsonify({'error': 'Doctor not found'}), 404
-
-#     # Fetch all open counters (status == True for boolean)
-#     counters = CounterInfo.query.filter(CounterInfo.status == True).order_by(CounterInfo.counterno).all()
-#     if not counters:
-#         return jsonify({'error': 'No open counters available'}), 400
-
-#     # Calculate queue lengths for all counters
-#     queue_lengths = []
-#     for c in counters:
-#         if c.queueinfo:
-#             if isinstance(c.queueinfo, str):
-#                 try:
-#                     queue = json.loads(c.queueinfo)
-#                 except Exception:
-#                     queue = []
-#             elif isinstance(c.queueinfo, list):
-#                 queue = c.queueinfo
-#             else:
-#                 queue = []
-#         else:
-#             queue = []
-#         queue_lengths.append(len(queue))
-
-#     # Find all counters with the shortest queue length
-#     min_queue_len = min(queue_lengths)
-#     eligible_counters = [c for c, l in zip(counters, queue_lengths) if l == min_queue_len]
-#     eligible_counters.sort(key=lambda c: c.counterno)
-
-#     # Use round-robin among eligible counters
-#     selected_counter = eligible_counters[last_assigned_counter_idx % len(eligible_counters)]
-#     last_assigned_counter_idx += 1
-
-#     counterno = selected_counter.counterno
-
-#     # Store in tokenmap
-#     new_tokenmap = TokenMap(
-#         tokenno=token_number,
-#         uhid=uhid,
-#         time=current_time,
-#         docid=str(docid)
-#     )
-#     db.session.add(new_tokenmap)
-#     db.session.commit()
-
-#     # Add entry to vitallogs
-#     vitallog_entry = VitalsLog(
-#         counterno=counterno,
-#         uhid=uhid,
-#         tokenno=token_number,
-#         date=today,
-#         starttime=None,
-#         endtime=None
-#     )
-#     db.session.add(vitallog_entry)
-#     db.session.commit()
-
-#     # Insert token into queue by priority
-#     if selected_counter.queueinfo:
-#         if isinstance(selected_counter.queueinfo, str):
-#             try:
-#                 queue = json.loads(selected_counter.queueinfo)
-#             except Exception:
-#                 queue = []
-#         elif isinstance(selected_counter.queueinfo, list):
-#             queue = selected_counter.queueinfo
-#         else:
-#             queue = []
-#     else:
-#         queue = []
-
-#     def get_patient_priority_for_token(tokenno):
-#         v_log = VitalsLog.query.filter_by(tokenno=tokenno, counterno=counterno).first()
-#         if v_log:
-#             p = Patient.query.filter_by(uhid=v_log.uhid).first()
-#             return PATIENT_PRIORITY.get(p.patienttype, 3) if p else 3
-#         return 3
-
-#     insert_idx = len(queue)
-#     for idx, token in enumerate(queue):
-#         p_priority = get_patient_priority_for_token(token)
-#         if patient_priority < p_priority:
-#             insert_idx = idx
-#             break
-#     queue.insert(insert_idx, token_number)
-#     selected_counter.queueinfo = json.dumps(queue)
-#     db.session.commit()
-
-#     return jsonify({
-#         'uhid': uhid,
-#         'token_number': token_number,
-#         'datetime': current_time.isoformat(),
-#         'docid': docid,
-#         'counterno': counterno
-#     })
-
 
 @app.route('/api/generate_token', methods=['GET'])
 def generate_token():
@@ -330,13 +206,29 @@ def generate_token():
         queue_lengths.append(len(queue))
 
     # Find all counters with the shortest queue length
+    # Find all counters with shortest queue length
+
+
+
+    # min_queue_len = min(queue_lengths)
+    # eligible_counters = [c for c, l in zip(counters, queue_lengths) if l == min_queue_len]
+    # eligible_counters.sort(key=lambda c: c.counterno)
+
+    # # Reset the round-robin index if all counters are empty
+    # if min_queue_len == 0 and len(eligible_counters) == len(counters):
+    #     last_assigned_counter_idx = 0
+
+    # selected_counter = eligible_counters[last_assigned_counter_idx % len(eligible_counters)]
+    # last_assigned_counter_idx += 1
+
+
     min_queue_len = min(queue_lengths)
     eligible_counters = [c for c, l in zip(counters, queue_lengths) if l == min_queue_len]
     eligible_counters.sort(key=lambda c: c.counterno)
 
-    # Use round-robin among eligible counters
-    selected_counter = eligible_counters[last_assigned_counter_idx % len(eligible_counters)]
-    last_assigned_counter_idx += 1
+    # Always pick the lowest-numbered eligible counter (fair, predictable)
+    selected_counter = eligible_counters[0]
+
 
     counterno = selected_counter.counterno
 
@@ -478,6 +370,56 @@ def reported_for_vitals():
     })
 
 
+
+# def remove_token_from_all_counters(tokenno):
+#     counters = CounterInfo.query.all()
+#     found = False
+#     for counter in counters:
+#         queue = counter.queueinfo
+#         # Coerce to list if somehow it's a string (for old DB values, or past bug)
+#         if isinstance(queue, str):
+#             try:
+#                 queue = json.loads(queue)
+#             except Exception:
+#                 queue = []
+#         if not isinstance(queue, list):
+#             queue = []
+#         if tokenno in queue:
+#             queue.remove(tokenno)
+#             counter.queueinfo = queue
+#             found = True
+#     if found:
+#         db.session.commit()
+#     return found
+
+
+
+def reconcile_counter_queues():
+    finished_tokens = set(int(v.tokenno) for v in VitalsLog.query.filter(VitalsLog.endtime.isnot(None)).all())
+    counters = CounterInfo.query.all()
+    changed = False
+    for counter in counters:
+        queue = counter.queueinfo or []
+        cleaned_queue = []
+        for tok in queue:
+            try:
+                tok_int = int(tok)
+            except Exception:
+                continue  # skip anything that can't be turned into int
+            if tok_int not in finished_tokens:
+                cleaned_queue.append(tok if isinstance(tok, int) else tok_int)
+        if len(cleaned_queue) != len(queue):
+            counter.queueinfo = cleaned_queue
+            changed = True
+    if changed:
+        db.session.commit()
+    return changed
+
+
+
+
+
+
 @app.route('/api/vitals/finished', methods=['POST'])
 def finished_vitals():
     data = request.json
@@ -536,7 +478,9 @@ def finished_vitals():
     if tokenno not in queue:
         queue.insert(insert_idx, tokenno)
         roominfo.queueinfo = json.dumps(queue)
-
+    
+    reconcile_counter_queues()
+    
     # Add to consultlogs
     new_log = ConsultLog(
         roomno=roominfo.roomno,
@@ -580,7 +524,7 @@ def add_counter():
         counterno=new_counterno,
         status='TRUE',
         counterloc=counterloc,
-        queueinfo=json.dumps([])
+        queueinfo=[json.dumps([])]
     )
     db.session.add(new_counter)
     db.session.commit()
